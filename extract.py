@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import csv
 import os
@@ -6,6 +7,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from telethon.tl.types import User, Channel, Chat
 
 load_dotenv()
@@ -13,6 +15,7 @@ load_dotenv()
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
+SESSION_STRING = os.getenv("SESSION_STRING")
 
 
 def format_sender(sender) -> str:
@@ -62,34 +65,58 @@ async def extract_messages(client: TelegramClient, chat, limit: int, output_file
 
 
 async def main():
+    parser = argparse.ArgumentParser(description="Extract Telegram chat messages to CSV")
+    parser.add_argument("--chat", type=int, help="Chat index from the dialog list")
+    parser.add_argument("--limit", type=int, default=100, help="Number of messages to extract (default: 100)")
+    parser.add_argument("--list", action="store_true", help="List available chats and exit")
+    args = parser.parse_args()
+
     if not all([API_ID, API_HASH, PHONE]):
         print("Error: set API_ID, API_HASH, and PHONE in a .env file (see .env.example)")
         sys.exit(1)
 
-    client = TelegramClient("session", int(API_ID), API_HASH)
-    await client.start(phone=PHONE)
+    if SESSION_STRING:
+        # Cloud mode: use session string from env var, no interactive auth
+        client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+        await client.connect()
+        if not await client.is_user_authorized():
+            print("Error: SESSION_STRING is invalid or expired. Re-run export_session.py locally to get a new one.")
+            sys.exit(1)
+    else:
+        # Local mode: use file-based session with interactive phone auth
+        client = TelegramClient("session", int(API_ID), API_HASH)
+        await client.start(phone=PHONE)
 
     dialogs = await list_chats(client)
 
-    print("\nEnter the chat number from the list above:")
-    try:
-        choice = int(input("> ").strip())
-        chat = dialogs[choice].entity
-    except (ValueError, IndexError):
-        print("Invalid choice.")
+    if args.list:
         await client.disconnect()
         return
 
-    print("How many messages to extract? (default: 100)")
-    raw = input("> ").strip()
-    limit = int(raw) if raw.isdigit() else 100
+    if args.chat is not None:
+        choice = args.chat
+    else:
+        print("\nEnter the chat number from the list above:")
+        try:
+            choice = int(input("> ").strip())
+        except (ValueError, EOFError):
+            print("Invalid choice.")
+            await client.disconnect()
+            return
+
+    try:
+        chat = dialogs[choice].entity
+    except IndexError:
+        print(f"Error: chat index {choice} is out of range.")
+        await client.disconnect()
+        return
 
     chat_name = getattr(chat, "title", None) or getattr(chat, "first_name", "chat")
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in chat_name)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = f"{safe_name}_{timestamp}.csv"
 
-    await extract_messages(client, chat, limit, output_file)
+    await extract_messages(client, chat, args.limit, output_file)
     await client.disconnect()
 
 
