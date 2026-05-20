@@ -77,7 +77,9 @@ async def main():
 
     if SESSION_STRING:
         # Cloud mode: use session string from env var, no interactive auth
-        client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+        # Ensure the version prefix '1' is present (may be stripped by some env configs)
+        session_str = SESSION_STRING if SESSION_STRING[0] == "1" else "1" + SESSION_STRING
+        client = TelegramClient(StringSession(session_str), int(API_ID), API_HASH)
         await client.connect()
         if not await client.is_user_authorized():
             print("Error: SESSION_STRING is invalid or expired. Re-run export_session.py locally to get a new one.")
