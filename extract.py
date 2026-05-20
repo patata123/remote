@@ -64,9 +64,21 @@ async def extract_messages(client: TelegramClient, chat, limit: int, output_file
     print(f"Saved {len(rows)} messages to '{output_file}'")
 
 
+def find_dialog_by_name(dialogs, name: str):
+    """Return (index, dialog) for the first dialog whose name contains `name` (case-insensitive).
+    Returns (None, None) if no match is found."""
+    name_lower = name.lower()
+    for i, dialog in enumerate(dialogs):
+        if name_lower in (dialog.name or "").lower():
+            return i, dialog
+    return None, None
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Extract Telegram chat messages to CSV")
-    parser.add_argument("--chat", type=int, help="Chat index from the dialog list")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--chat", type=int, help="Chat index from the dialog list")
+    group.add_argument("--chat-name", type=str, help="Partial chat name to search for (case-insensitive)")
     parser.add_argument("--limit", type=int, default=100, help="Number of messages to extract (default: 100)")
     parser.add_argument("--list", action="store_true", help="List available chats and exit")
     args = parser.parse_args()
@@ -93,8 +105,21 @@ async def main():
         await client.disconnect()
         return
 
-    if args.chat is not None:
-        choice = args.chat
+    if args.chat_name is not None:
+        idx, dialog = find_dialog_by_name(dialogs, args.chat_name)
+        if dialog is None:
+            print(f"Error: no chat found matching '{args.chat_name}'.")
+            await client.disconnect()
+            return
+        print(f"Matched chat #{idx}: {dialog.name}")
+        chat = dialog.entity
+    elif args.chat is not None:
+        try:
+            chat = dialogs[args.chat].entity
+        except IndexError:
+            print(f"Error: chat index {args.chat} is out of range.")
+            await client.disconnect()
+            return
     else:
         print("\nEnter the chat number from the list above:")
         try:
@@ -103,13 +128,12 @@ async def main():
             print("Invalid choice.")
             await client.disconnect()
             return
-
-    try:
-        chat = dialogs[choice].entity
-    except IndexError:
-        print(f"Error: chat index {choice} is out of range.")
-        await client.disconnect()
-        return
+        try:
+            chat = dialogs[choice].entity
+        except IndexError:
+            print(f"Error: chat index {choice} is out of range.")
+            await client.disconnect()
+            return
 
     chat_name = getattr(chat, "title", None) or getattr(chat, "first_name", "chat")
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in chat_name)
